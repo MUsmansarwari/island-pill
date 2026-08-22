@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Island Pill</string>
+    <string name="channel_name">Island running</string>
+    <string name="notif_title">Island is active</string>
+    <string name="notif_text">Tap to open settings</string>
+    <string name="accessibility_description">Lets the island draw above the status bar. It reads no screen content and performs no actions on your behalf.</string>
+</resources>
