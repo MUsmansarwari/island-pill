@@ -34,6 +34,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsOff
@@ -42,6 +44,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Vibration
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -71,6 +74,7 @@ import com.nahope.island.data.IslandConfig
 import com.nahope.island.island.IslandEvent
 import com.nahope.island.island.IslandMode
 import com.nahope.island.island.IslandUiState
+import com.nahope.island.island.sources.CallCommands
 import com.nahope.island.island.sources.MediaCommands
 import kotlinx.coroutines.delay
 import kotlin.math.max
@@ -79,6 +83,7 @@ private val IslandBlack = Color(0xFF000000)
 private val IslandWhite = Color(0xFFF2F2F7)
 private val IslandDim = Color(0xFF9A9AA0)
 private val ChargeGreen = Color(0xFF32D74B)
+private val CallRed = Color(0xFFFF453A)
 
 /** Must match the MINIMAL-state growth used below. */
 private const val MINIMAL_GROWTH = 86f
@@ -207,11 +212,12 @@ fun IslandOverlay(
 }
 
 /**
- * Media needs room for art, two lines of text, a scrubber and three buttons; a charging or silent
- * banner is a single row, so it is capped rather than stretched to match.
+ * Media needs room for art, two lines of text, a scrubber and three buttons, and a call needs the
+ * same for the avatar and its answer/decline row; a charging or silent banner is a single row, so
+ * it is capped rather than stretched to match.
  */
 private fun expandedHeightFor(event: IslandEvent?, config: IslandConfig): Dp = when (event) {
-    is IslandEvent.Media -> config.expandedHeight.dp
+    is IslandEvent.Media, is IslandEvent.Call -> config.expandedHeight.dp
     else -> config.expandedHeight.coerceAtMost(118f).dp
 }
 
@@ -230,6 +236,12 @@ private fun CompactContent(event: IslandEvent?) {
             is IslandEvent.Media -> {
                 Artwork(event, size = 22.dp)
                 Waveform(playing = event.isPlaying)
+            }
+
+            is IslandEvent.Call -> {
+                CallGlyph(event, size = 22.dp)
+                // Ringing has no elapsed time yet, so the caller is the only thing worth showing.
+                Label(callDuration(event.startedAtMs) ?: event.callerName)
             }
 
             is IslandEvent.Charging -> {
@@ -274,6 +286,7 @@ private fun CompactContent(event: IslandEvent?) {
 private fun SecondaryGlyph(event: IslandEvent) {
     when (event) {
         is IslandEvent.Media -> Artwork(event, size = 20.dp)
+        is IslandEvent.Call -> CallGlyph(event, size = 20.dp)
         is IslandEvent.Charging -> Glyph(Icons.Rounded.Bolt, ChargeGreen)
         is IslandEvent.Bluetooth -> Glyph(Icons.Rounded.Headphones, IslandWhite)
         is IslandEvent.Notification -> AppIcon(event, size = 20.dp)
@@ -295,6 +308,7 @@ private fun ExpandedContent(event: IslandEvent?) {
     ) {
         when (event) {
             is IslandEvent.Media -> ExpandedMedia(event)
+            is IslandEvent.Call -> ExpandedCall(event)
             is IslandEvent.Notification -> ExpandedNotification(event)
             is IslandEvent.Bluetooth -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -388,6 +402,95 @@ private fun ProgressTrack(media: IslandEvent.Media) {
 }
 
 @Composable
+private fun ExpandedCall(call: IslandEvent.Call) {
+    val ringing = call.state == IslandEvent.Call.State.RINGING
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CallAvatar(call, size = 52.dp)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Label(call.callerName, size = 15, weight = FontWeight.SemiBold)
+            Label(
+                text = if (ringing) {
+                    val kind = if (call.isVideo) "Incoming video call" else "Incoming call"
+                    "$kind · ${call.appName}"
+                } else {
+                    callDuration(call.startedAtMs) ?: call.appName
+                },
+                size = 12,
+                dim = true,
+            )
+        }
+    }
+
+    // Hanging up and declining are the same gesture to the user, but dialers publish them as
+    // separate intents and only ever set one of them, so whichever exists wins.
+    val end = if (ringing) call.decline else (call.hangUp ?: call.decline)
+    val answer = call.answer.takeIf { ringing }
+    val buttons = listOfNotNull(end, answer).size
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (buttons > 1) Arrangement.SpaceEvenly else Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (buttons == 0) {
+            // No usable intents came through — hand the call off to the dialer's own screen.
+            CallActionButton(Icons.Rounded.Call, ChargeGreen) { CallCommands.fire(call.open) }
+        } else {
+            end?.let { CallActionButton(Icons.Rounded.CallEnd, CallRed) { CallCommands.fire(it) } }
+            answer?.let { CallActionButton(Icons.Rounded.Call, ChargeGreen) { CallCommands.fire(it) } }
+        }
+    }
+}
+
+@Composable
+private fun CallActionButton(icon: ImageVector, background: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(46.dp)
+            .clip(CircleShape)
+            .background(background)
+            .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = IslandWhite,
+            modifier = Modifier.size(23.dp),
+        )
+    }
+}
+
+/**
+ * Time since the call connected, re-read once a second. Null while it is still ringing, because
+ * there is nothing honest to count from until the dialer stamps a start.
+ */
+@Composable
+private fun callDuration(startedAtMs: Long?): String? {
+    if (startedAtMs == null) return null
+
+    var now by remember(startedAtMs) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(startedAtMs) {
+        while (true) {
+            delay(1000)
+            now = System.currentTimeMillis()
+        }
+    }
+
+    val total = ((now - startedAtMs) / 1000L).coerceAtLeast(0L)
+    val hours = total / 3600
+    val minutes = (total % 3600) / 60
+    val seconds = total % 60
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(minutes, seconds)
+    }
+}
+
+@Composable
 private fun ExpandedNotification(event: IslandEvent.Notification) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         AppIcon(event, size = 34.dp)
@@ -435,6 +538,75 @@ private fun Artwork(media: IslandEvent.Media, size: Dp, radius: Dp = 6.dp) {
                 .clip(RoundedCornerShape(radius))
                 .background(IslandWhite.copy(alpha = 0.15f)),
         )
+    }
+}
+
+/** The pill-sized caller badge: contact photo when the dialer supplied one, handset when it did not. */
+@Composable
+private fun CallGlyph(call: IslandEvent.Call, size: Dp) {
+    val transition = rememberInfiniteTransition(label = "call-pulse")
+    val pulse by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.16f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 620),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "call-pulse-scale",
+    )
+
+    val ringing = call.state == IslandEvent.Call.State.RINGING
+    Box(
+        modifier = Modifier.graphicsLayer {
+            val factor = if (ringing) pulse else 1f
+            scaleX = factor
+            scaleY = factor
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        val avatar = call.callerAvatar
+        if (avatar != null) {
+            androidx.compose.foundation.Image(
+                bitmap = avatar.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(size)
+                    .clip(CircleShape),
+            )
+        } else {
+            Glyph(if (call.isVideo) Icons.Rounded.Videocam else Icons.Rounded.Call, ChargeGreen)
+        }
+    }
+}
+
+@Composable
+private fun CallAvatar(call: IslandEvent.Call, size: Dp) {
+    val avatar = call.callerAvatar
+    if (avatar != null) {
+        androidx.compose.foundation.Image(
+            bitmap = avatar.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(size)
+                .clip(CircleShape),
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(IslandWhite.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (call.isVideo) Icons.Rounded.Videocam else Icons.Rounded.Call,
+                contentDescription = null,
+                tint = IslandWhite,
+                modifier = Modifier.size(size / 2),
+            )
+        }
     }
 }
 

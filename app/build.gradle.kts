@@ -15,9 +15,23 @@ android {
         versionName = "0.1.0"
     }
 
+    // Checked into the repo on purpose. Every machine otherwise generates its own
+    // ~/.android/debug.keystore, and an APK built on one refuses to install over the other with
+    // INSTALL_FAILED_UPDATE_INCOMPATIBLE — which costs an uninstall, and with it every granted
+    // permission. A shared key is worthless to an attacker on a personal debug build.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("debug")
         }
         release {
             isMinifyEnabled = false

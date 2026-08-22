@@ -6,6 +6,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.nahope.island.island.IslandEvent
 import com.nahope.island.island.IslandRepository
+import com.nahope.island.island.sources.CallSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -24,9 +25,13 @@ class IslandNotificationListener : NotificationListenerService() {
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         _connected.value = false
+        CallSource.reset()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification, rankingMap: RankingMap?) {
+        // Calls arrive as ongoing notifications, which shouldShow() drops. Claim them first.
+        if (CallSource.handle(this, sbn)) return
+
         if (!shouldShow(sbn, rankingMap)) return
 
         val n = sbn.notification
@@ -45,6 +50,7 @@ class IslandNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification, rankingMap: RankingMap?, reason: Int) {
+        if (CallSource.handleRemoved(sbn)) return
         IslandRepository.clear(idOf(sbn))
     }
 

@@ -19,7 +19,14 @@ Stack: Gradle 9.7.1 / AGP 9.3.1 / Kotlin 2.4.10 / compileSdk 37 / Compose BOM 20
 Note AGP 9 has **built-in Kotlin support** — applying `org.jetbrains.kotlin.android` is a hard error.
 
 `local.properties` must use forward slashes; backslashes parse as properties escapes and fail with
-a bare `IOException: Invalid file path`.
+a bare `IOException: Invalid file path`. It is tracked but pinned per machine — if your SDK lives
+somewhere else, edit it and run `git update-index --skip-worktree local.properties` so your path
+never reaches a commit.
+
+`keystore/debug.keystore` is checked in on purpose. Every machine otherwise generates its own
+`~/.android/debug.keystore`, and an APK built on one refuses to install over the other with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE` — which costs an uninstall, and with it every granted
+permission and the saved calibration.
 
 ## Install & permissions
 
@@ -58,12 +65,12 @@ Finally flip **Island enabled**, then press **Auto-align pill over the hole**.
 | Media: art, title, transport, scrub position | [MediaSource.kt](app/src/main/kotlin/com/nahope/island/island/sources/MediaSource.kt) | ✅ |
 | Charging / silent-mode / Bluetooth buds (+ battery via reflection) | [SystemSource.kt](app/src/main/kotlin/com/nahope/island/island/sources/SystemSource.kt) | ✅ |
 | Notification intercept | [IslandNotificationListener.kt](app/src/main/kotlin/com/nahope/island/service/IslandNotificationListener.kt) | ✅ |
+| Calls: incoming + ongoing, answer / decline / hang up, live duration | [CallSource.kt](app/src/main/kotlin/com/nahope/island/island/sources/CallSource.kt) | ✅ |
 | X/Y/W/H/radius calibration + permission onboarding | [MainActivity.kt](app/src/main/kotlin/com/nahope/island/MainActivity.kt) | ✅ |
 | Boot persistence | [BootReceiver.kt](app/src/main/kotlin/com/nahope/island/service/BootReceiver.kt) | ✅ |
 
 ## Not built yet (next phases)
 
-- **Calls** — incoming/ongoing call pill. Needs `READ_PHONE_STATE` or an `InCallService`.
 - **Turn-by-turn navigation** — parse the Google Maps ongoing notification.
 - **Timers / screen recording / voice memo** — same notification-parsing path.
 - **RGB edge glow** around the cutout.
@@ -98,6 +105,17 @@ Finally flip **Island enabled**, then press **Auto-align pill over the hole**.
 - The data sources live in the **AccessibilityService**, not the foreground service. ColorOS does
   not restart the foreground service after a reinstall or a low-memory kill, which left the island
   on screen but blind. The system always rebinds an accessibility service.
+- **Calls come from the dialer's notification, not from telephony.** `READ_PHONE_STATE` only ever
+  reports RINGING / OFFHOOK / IDLE: no caller name — that needs `READ_CALL_LOG` *and*
+  `READ_CONTACTS` since Android 10 — no avatar, and no way to pick up. An `InCallService` has all
+  three but only as the default dialer. A CallStyle notification carries the caller as a `Person`,
+  the call type, and the answer / decline / hang-up `PendingIntent`s, costs no new permission, and
+  covers WhatsApp / Telegram / Signal calls that telephony never sees at all.
+- The three call intents are `@hide` even on API 31+, so they are read out of the extras by literal
+  key (`android.answerIntent` and friends), falling back to scanning the action titles. A miss there
+  costs the button, never the pill.
+- `shouldShow()` drops ongoing notifications and *every* call notification is ongoing, so
+  `CallSource` gets first refusal in `onNotificationPosted` before that filter runs.
 - `SourceSet.bindMedia()` remembers the notification-access flag instead of acting on it, because
   the flow emits its current value before `start()` has run.
 - Calibration sliders write to DataStore only on release; while the finger is down they publish to

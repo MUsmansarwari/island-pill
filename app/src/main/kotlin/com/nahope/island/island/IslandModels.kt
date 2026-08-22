@@ -1,5 +1,6 @@
 package com.nahope.island.island
 
+import android.app.PendingIntent
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 
@@ -27,6 +28,34 @@ sealed interface IslandEvent {
 
     /** null = sticky, stays until the source clears it. */
     val autoDismissMs: Long?
+
+    /**
+     * A phone call — cellular or VoIP. Sticky: it lives exactly as long as the dialer's own
+     * notification does, so hanging up in any app clears the pill without us tracking state.
+     */
+    data class Call(
+        override val id: String = ID,
+        val packageName: String,
+        val appName: String,
+        val callerName: String,
+        val callerAvatar: Bitmap?,
+        val state: State,
+        val isVideo: Boolean,
+        /** Wall-clock start of a connected call, for the duration ticker. Null while ringing. */
+        val startedAtMs: Long?,
+        val answer: PendingIntent?,
+        val decline: PendingIntent?,
+        val hangUp: PendingIntent?,
+        /** Tapping the card hands off to the dialer's own in-call screen. */
+        val open: PendingIntent?,
+    ) : IslandEvent {
+        enum class State { RINGING, ACTIVE }
+
+        override val priority = Priority.CALL
+        override val autoDismissMs: Long? = null
+
+        companion object { const val ID = "call" }
+    }
 
     data class Media(
         override val id: String = ID,
